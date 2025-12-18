@@ -3,8 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Play, Download, Loader2, Volume2, Pause, CheckCircle } from "lucide-react";
+import { Play, Download, Loader2, Volume2, CheckCircle, StopCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { fetchAudioForText } from "@/lib/gemini-audio";
 
 interface QuizItem {
   question_en: string;
@@ -25,17 +26,18 @@ interface QuizData {
 interface AudioItem {
   index: number;
   text: string;
-  status: "pending" | "playing" | "done";
+  audioBlob: Blob | null;
+  status: "pending" | "generating" | "done" | "error";
 }
 
 const Index = () => {
   const [jsonInput, setJsonInput] = useState("");
   const [quizData, setQuizData] = useState<QuizData | null>(null);
   const [audioItems, setAudioItems] = useState<AudioItem[]>([]);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentIndex, setCurrentIndex] = useState<number | null>(null);
-  const [playedCount, setPlayedCount] = useState(0);
-  const speechRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [currentPlaying, setCurrentPlaying] = useState<number | null>(null);
+  const [shouldStop, setShouldStop] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const { toast } = useToast();
 
   const parseJson = () => {
@@ -45,137 +47,131 @@ const Index = () => {
       setAudioItems(
         parsed.data.map((item, index) => ({
           index,
-          text: `Question ${index + 1}. ${item.question_script}. Answer is ${item.answer}. ${item.extra_details_speech_script}`,
+          text: `Question number ${index + 1}. ${item.question_script}. The answer is ${item.answer}. ${item.extra_details_speech_script}`,
+          audioBlob: null,
           status: "pending" as const,
         }))
       );
-      setPlayedCount(0);
-      toast({ title: "JSON parsed successfully", description: `Found ${parsed.data.length} questions` });
+      toast({ title: "JSON parsed", description: `Found ${parsed.data.length} questions` });
     } catch (error) {
-      toast({ title: "Invalid JSON", description: "Please check your JSON format", variant: "destructive" });
+      toast({ title: "Invalid JSON", variant: "destructive" });
     }
   };
 
-  const speakText = (text: string, index: number) => {
-    return new Promise<void>((resolve) => {
-      window.speechSynthesis.cancel();
-      
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "hi-IN";
-      utterance.rate = 0.9;
-      utterance.pitch = 1.1;
-      
-      // Try to find a female Hindi voice
-      const voices = window.speechSynthesis.getVoices();
-      const hindiVoice = voices.find(v => v.lang.includes("hi") && v.name.toLowerCase().includes("female")) 
-        || voices.find(v => v.lang.includes("hi"))
-        || voices.find(v => v.name.toLowerCase().includes("female"));
-      
-      if (hindiVoice) {
-        utterance.voice = hindiVoice;
-      }
-
-      utterance.onend = () => {
-        setAudioItems(prev => 
-          prev.map(item => item.index === index ? { ...item, status: "done" } : item)
-        );
-        setPlayedCount(prev => prev + 1);
-        resolve();
-      };
-
-      utterance.onerror = () => {
-        resolve();
-      };
-
-      speechRef.current = utterance;
-      setCurrentIndex(index);
-      setAudioItems(prev => 
-        prev.map(item => item.index === index ? { ...item, status: "playing" } : item)
-      );
-      window.speechSynthesis.speak(utterance);
-    });
-  };
-
-  const playAll = async () => {
-    if (!quizData || isPlaying) return;
-    setIsPlaying(true);
-    setPlayedCount(0);
-    
-    // Reset all to pending
-    setAudioItems(prev => prev.map(item => ({ ...item, status: "pending" })));
+  const generateAllAudio = async () => {
+    if (!quizData || isGenerating) return;
+    setIsGenerating(true);
+    setShouldStop(false);
 
     for (let i = 0; i < audioItems.length; i++) {
-      if (!isPlaying) break;
-      await speakText(audioItems[i].text, i);
-      // Small pause between questions
-      await new Promise(r => setTimeout(r, 1000));
+      if (shouldStop) break;
+
+      setAudioItems((prev) =>
+        prev.map((item) => (item.index === i ? { ...item, status: "generating" } : item))
+      );
+
+      const audioBlob = await fetchAudioForText(audioItems[i].text);
+
+      setAudioItems((prev) =>
+        prev.map((item) =>
+          item.index === i
+            ? { ...item, audioBlob, status: audioBlob ? "done" : "error" }
+            : item
+        )
+      );
+
+      // Small delay between API calls
+      await new Promise((r) => setTimeout(r, 300));
     }
 
-    setIsPlaying(false);
-    setCurrentIndex(null);
-    toast({ title: "Playback complete!", description: "All questions have been read" });
+    setIsGenerating(false);
+    toast({ title: "Generation complete!" });
   };
 
-  const playSingle = (index: number) => {
-    const item = audioItems[index];
-    if (!item) return;
-    speakText(item.text, index);
+  const stopGeneration = () => {
+    setShouldStop(true);
+    setIsGenerating(false);
   };
 
-  const stopPlayback = () => {
-    window.speechSynthesis.cancel();
-    setIsPlaying(false);
-    setCurrentIndex(null);
-  };
+  const playAudio = (index: number) => {
+    const item = audioItems.find((a) => a.index === index);
+    if (!item?.audioBlob) return;
 
-  const downloadTranscript = () => {
-    if (!quizData) return;
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+
+    const url = URL.createObjectURL(item.audioBlob);
+    const audio = new Audio(url);
+    audioRef.current = audio;
+    setCurrentPlaying(index);
     
-    let content = `Quiz Date: ${quizData.date}\n\n`;
-    quizData.data.forEach((item, idx) => {
-      content += `Question ${idx + 1}:\n`;
-      content += `${item.question_script}\n`;
-      content += `Answer: ${item.answer}\n`;
-      content += `Details: ${item.extra_details_speech_script}\n\n`;
-    });
+    audio.onended = () => {
+      setCurrentPlaying(null);
+      URL.revokeObjectURL(url);
+    };
+    audio.play();
+  };
 
-    const blob = new Blob([content], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
+  const downloadSingle = (index: number) => {
+    const item = audioItems.find((a) => a.index === index);
+    if (!item?.audioBlob) return;
+
+    const url = URL.createObjectURL(item.audioBlob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `quiz_${quizData.date.replace(/\s/g, "_")}.txt`;
+    a.download = `question_${index + 1}.wav`;
     a.click();
     URL.revokeObjectURL(url);
-    
-    toast({ title: "Downloaded!", description: "Transcript saved as text file" });
   };
 
-  const completedCount = audioItems.filter(a => a.status === "done").length;
+  const downloadAll = () => {
+    const completed = audioItems.filter((a) => a.status === "done" && a.audioBlob);
+    if (completed.length === 0) {
+      toast({ title: "No audio to download", variant: "destructive" });
+      return;
+    }
+
+    completed.forEach((item) => {
+      if (item.audioBlob) {
+        const url = URL.createObjectURL(item.audioBlob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `question_${item.index + 1}.wav`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    });
+
+    toast({ title: `Downloading ${completed.length} files` });
+  };
+
+  const completedCount = audioItems.filter((a) => a.status === "done").length;
   const totalCount = audioItems.length;
   const progressPercent = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background to-muted/30 p-4 md:p-6">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-4 md:p-6">
       <div className="max-w-4xl mx-auto space-y-6">
         <header className="text-center py-6">
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent mb-2">
-            Quiz Voice Reader
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">
+            Quiz Voice Generator
           </h1>
-          <p className="text-muted-foreground">Paste your JSON and listen to questions with TTS</p>
+          <p className="text-slate-400">Generate audio with Gemini TTS (Kore voice)</p>
         </header>
 
-        <Card className="border-2">
+        <Card className="bg-slate-800/50 border-slate-700">
           <CardHeader>
-            <CardTitle className="text-lg">JSON Input</CardTitle>
+            <CardTitle className="text-slate-200">Paste Quiz JSON</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <Textarea
               placeholder='{"date": "...", "data": [...]}'
               value={jsonInput}
               onChange={(e) => setJsonInput(e.target.value)}
-              className="min-h-[180px] font-mono text-sm"
+              className="min-h-[160px] font-mono text-sm bg-slate-900 border-slate-600 text-slate-200"
             />
-            <Button onClick={parseJson} className="w-full" size="lg">
+            <Button onClick={parseJson} className="w-full bg-purple-600 hover:bg-purple-700">
               Parse JSON
             </Button>
           </CardContent>
@@ -183,16 +179,16 @@ const Index = () => {
 
         {quizData && (
           <>
-            <Card className="border-2 border-primary/20">
+            <Card className="bg-slate-800/50 border-purple-500/30">
               <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span>Progress: {quizData.date}</span>
-                  <div className="flex items-center gap-2">
+                <CardTitle className="flex items-center justify-between text-slate-200">
+                  <span>{quizData.date}</span>
+                  <div className="flex items-center gap-3">
                     <div className="relative">
-                      <div className="w-14 h-14 rounded-full border-4 border-primary/20 flex items-center justify-center">
-                        <span className="text-xl font-bold text-primary">{completedCount}</span>
+                      <div className="w-16 h-16 rounded-full border-4 border-purple-500/30 flex items-center justify-center bg-slate-900">
+                        <span className="text-2xl font-bold text-purple-400">{completedCount}</span>
                       </div>
-                      <div className="absolute -bottom-1 -right-1 bg-muted rounded-full px-2 py-0.5 text-xs">
+                      <div className="absolute -bottom-1 -right-1 bg-slate-700 rounded-full px-2 py-0.5 text-xs text-slate-300">
                         /{totalCount}
                       </div>
                     </div>
@@ -200,26 +196,37 @@ const Index = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Progress value={progressPercent} className="h-4" />
+                <Progress value={progressPercent} className="h-3 bg-slate-700" />
                 <div className="flex gap-3">
-                  {!isPlaying ? (
-                    <Button onClick={playAll} className="flex-1" size="lg">
+                  {!isGenerating ? (
+                    <Button
+                      onClick={generateAllAudio}
+                      className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
+                      size="lg"
+                    >
                       <Volume2 className="mr-2 h-5 w-5" />
-                      Play All Questions
+                      Generate All Audio
                     </Button>
                   ) : (
-                    <Button onClick={stopPlayback} variant="destructive" className="flex-1" size="lg">
-                      <Pause className="mr-2 h-5 w-5" />
-                      Stop Playback
+                    <Button
+                      onClick={stopGeneration}
+                      variant="destructive"
+                      className="flex-1"
+                      size="lg"
+                    >
+                      <StopCircle className="mr-2 h-5 w-5" />
+                      Stop
                     </Button>
                   )}
                   <Button
-                    onClick={downloadTranscript}
+                    onClick={downloadAll}
                     variant="outline"
                     size="lg"
+                    disabled={completedCount === 0}
+                    className="border-purple-500/50 text-purple-300 hover:bg-purple-500/20"
                   >
                     <Download className="mr-2 h-5 w-5" />
-                    Download
+                    Download All ({completedCount})
                   </Button>
                 </div>
               </CardContent>
@@ -228,57 +235,69 @@ const Index = () => {
             <div className="grid gap-3">
               {quizData.data.map((item, index) => {
                 const audioItem = audioItems[index];
-                const isCurrentPlaying = currentIndex === index;
-                
+                const isPlaying = currentPlaying === index;
+
                 return (
-                  <Card 
-                    key={index} 
-                    className={`transition-all duration-300 ${
-                      isCurrentPlaying ? "ring-2 ring-primary shadow-lg" : ""
-                    } ${audioItem?.status === "done" ? "bg-green-50 dark:bg-green-950/20" : ""}`}
+                  <Card
+                    key={index}
+                    className={`transition-all bg-slate-800/50 border-slate-700 ${
+                      isPlaying ? "ring-2 ring-purple-500" : ""
+                    } ${audioItem?.status === "done" ? "border-green-500/50" : ""}`}
                   >
                     <CardContent className="p-4">
                       <div className="flex items-start gap-4">
                         <div
-                          className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 transition-all ${
+                          className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${
                             audioItem?.status === "done"
-                              ? "bg-green-500 text-white"
-                              : audioItem?.status === "playing"
-                              ? "bg-primary text-primary-foreground animate-pulse"
-                              : "bg-muted text-muted-foreground"
+                              ? "bg-green-500"
+                              : audioItem?.status === "generating"
+                              ? "bg-yellow-500 animate-pulse"
+                              : audioItem?.status === "error"
+                              ? "bg-red-500"
+                              : "bg-slate-600"
                           }`}
                         >
                           {audioItem?.status === "done" ? (
-                            <CheckCircle className="h-6 w-6" />
+                            <CheckCircle className="h-6 w-6 text-white" />
+                          ) : audioItem?.status === "generating" ? (
+                            <Loader2 className="h-6 w-6 text-white animate-spin" />
                           ) : (
-                            <span className="font-bold">{index + 1}</span>
+                            <span className="font-bold text-white">{index + 1}</span>
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <p className="font-medium text-foreground mb-2 leading-relaxed">
-                            {item.question_script}
-                          </p>
-                          <p className="text-sm text-muted-foreground line-clamp-2 mb-2">
+                          <p className="font-medium text-slate-200 mb-2">{item.question_script}</p>
+                          <p className="text-sm text-slate-400 line-clamp-2 mb-2">
                             {item.extra_details_speech_script}
                           </p>
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full font-medium">
-                              Answer: {item.answer}
-                            </span>
-                          </div>
+                          <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-1 rounded-full">
+                            Answer: {item.answer}
+                          </span>
                         </div>
-                        <Button
-                          size="icon"
-                          variant={isCurrentPlaying ? "default" : "outline"}
-                          onClick={() => playSingle(index)}
-                          className="h-10 w-10"
-                        >
-                          {isCurrentPlaying ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Play className="h-4 w-4" />
-                          )}
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            onClick={() => playAudio(index)}
+                            disabled={audioItem?.status !== "done"}
+                            className="border-slate-600 text-slate-300"
+                          >
+                            {isPlaying ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Play className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="outline"
+                            onClick={() => downloadSingle(index)}
+                            disabled={audioItem?.status !== "done"}
+                            className="border-slate-600 text-slate-300"
+                          >
+                            <Download className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
