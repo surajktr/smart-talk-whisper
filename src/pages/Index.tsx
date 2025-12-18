@@ -371,7 +371,7 @@ const Index = () => {
       {/* Main Content */}
       <div className="flex-1 p-2 flex flex-col">
         {/* Question Card */}
-        <div className="border-2 border-foreground rounded-2xl p-4 sm:p-6 mb-4 bg-white shadow-sm">
+        <div className="border-2 border-foreground rounded-lg p-4 sm:p-6 mb-3">
           <p className="text-lg sm:text-xl font-semibold text-foreground mb-2">
             {currentIndex + 1}. {currentQuestion?.question_en}
           </p>
@@ -384,7 +384,7 @@ const Index = () => {
         <div className="grid grid-cols-2 gap-3 mb-3">
           {currentQuestion?.options.map((option, idx) => {
             const isCorrect = option === currentQuestion.answer;
-            const showAsCorrect = (displayPhase === "answer" || displayPhase === "details") && isCorrect;
+            const showAsCorrect = displayPhase !== "question" && isCorrect;
 
             return (
               <button
@@ -401,16 +401,15 @@ const Index = () => {
         </div>
 
         {/* Key Points - shown after answer phase */}
-
-        {(displayPhase === "answer" || displayPhase === "details") && currentQuestion && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
+        {displayPhase === "details" && currentQuestion && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1">
             {/* English Key Points */}
-            <div className="border border-gray-200 rounded-xl p-5 bg-white shadow-sm">
-              <h3 className="text-xl font-bold text-blue-900 mb-3">Key Points</h3>
-              <ul className="space-y-3">
+            <div className="border rounded-lg p-4 bg-muted/30">
+              <h3 className="text-xl font-bold text-foreground mb-3">Key Points</h3>
+              <ul className="space-y-2">
                 {englishPoints.map((point, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-gray-700 text-sm font-medium leading-relaxed">
-                    <span className="text-blue-600 text-lg mt-[-2px]">•</span>
+                  <li key={idx} className="flex items-start gap-2 text-foreground text-sm">
+                    <span className="text-primary mt-0.5">•</span>
                     <span>{point}</span>
                   </li>
                 ))}
@@ -418,12 +417,12 @@ const Index = () => {
             </div>
 
             {/* Hindi Key Points */}
-            <div className="border border-gray-200 rounded-xl p-5 bg-white shadow-sm">
-              <h3 className="text-xl font-bold text-blue-900 mb-3">महत्वपूर्ण जानकारी</h3>
-              <ul className="space-y-3">
+            <div className="border rounded-lg p-4 bg-muted/30">
+              <h3 className="text-xl font-bold text-red-500 mb-3">महत्वपूर्ण जानकारी</h3>
+              <ul className="space-y-2">
                 {hindiPoints.map((point, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-gray-700 text-sm font-medium leading-relaxed">
-                    <span className="text-blue-600 text-lg mt-[-2px]">•</span>
+                  <li key={idx} className="flex items-start gap-2 text-foreground text-sm">
+                    <span className="text-red-500 mt-0.5">•</span>
                     <span>{point}</span>
                   </li>
                 ))}
