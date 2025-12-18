@@ -371,7 +371,7 @@ const Index = () => {
       {/* Main Content */}
       <div className="flex-1 p-2 flex flex-col">
         {/* Question Card */}
-        <div className="border-2 border-foreground rounded-lg p-4 sm:p-6 mb-3">
+        <div className="border-2 border-foreground rounded-2xl p-4 sm:p-6 mb-4 bg-white shadow-sm">
           <p className="text-lg sm:text-xl font-semibold text-foreground mb-2">
             {currentIndex + 1}. {currentQuestion?.question_en}
           </p>
@@ -401,15 +401,16 @@ const Index = () => {
         </div>
 
         {/* Key Points - shown after answer phase */}
+
         {(displayPhase === "answer" || displayPhase === "details") && currentQuestion && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-1">
             {/* English Key Points */}
-            <div className="border rounded-lg p-4 bg-muted/30">
-              <h3 className="text-xl font-bold text-blue-600 mb-3">Key Points</h3>
-              <ul className="space-y-2">
+            <div className="border border-gray-200 rounded-xl p-5 bg-white shadow-sm">
+              <h3 className="text-xl font-bold text-blue-900 mb-3">Key Points</h3>
+              <ul className="space-y-3">
                 {englishPoints.map((point, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-foreground text-sm">
-                    <span className="text-blue-600 mt-0.5">•</span>
+                  <li key={idx} className="flex items-start gap-2 text-gray-700 text-sm font-medium leading-relaxed">
+                    <span className="text-blue-600 text-lg mt-[-2px]">•</span>
                     <span>{point}</span>
                   </li>
                 ))}
@@ -417,12 +418,12 @@ const Index = () => {
             </div>
 
             {/* Hindi Key Points */}
-            <div className="border rounded-lg p-4 bg-muted/30">
-              <h3 className="text-xl font-bold text-blue-600 mb-3">महत्वपूर्ण जानकारी</h3>
-              <ul className="space-y-2">
+            <div className="border border-gray-200 rounded-xl p-5 bg-white shadow-sm">
+              <h3 className="text-xl font-bold text-blue-900 mb-3">महत्वपूर्ण जानकारी</h3>
+              <ul className="space-y-3">
                 {hindiPoints.map((point, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-foreground text-sm">
-                    <span className="text-blue-600 mt-0.5">•</span>
+                  <li key={idx} className="flex items-start gap-2 text-gray-700 text-sm font-medium leading-relaxed">
+                    <span className="text-blue-600 text-lg mt-[-2px]">•</span>
                     <span>{point}</span>
                   </li>
                 ))}
