@@ -384,7 +384,7 @@ const Index = () => {
         <div className="grid grid-cols-2 gap-3 mb-3">
           {currentQuestion?.options.map((option, idx) => {
             const isCorrect = option === currentQuestion.answer;
-            const showAsCorrect = displayPhase !== "question" && isCorrect;
+            const showAsCorrect = (displayPhase === "answer" || displayPhase === "details") && isCorrect;
 
             return (
               <button
@@ -401,15 +401,15 @@ const Index = () => {
         </div>
 
         {/* Key Points - shown after answer phase */}
-        {displayPhase === "details" && currentQuestion && (
+        {(displayPhase === "answer" || displayPhase === "details") && currentQuestion && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1">
             {/* English Key Points */}
             <div className="border rounded-lg p-4 bg-muted/30">
-              <h3 className="text-xl font-bold text-foreground mb-3">Key Points</h3>
+              <h3 className="text-xl font-bold text-blue-600 mb-3">Key Points</h3>
               <ul className="space-y-2">
                 {englishPoints.map((point, idx) => (
                   <li key={idx} className="flex items-start gap-2 text-foreground text-sm">
-                    <span className="text-primary mt-0.5">•</span>
+                    <span className="text-blue-600 mt-0.5">•</span>
                     <span>{point}</span>
                   </li>
                 ))}
@@ -418,11 +418,11 @@ const Index = () => {
 
             {/* Hindi Key Points */}
             <div className="border rounded-lg p-4 bg-muted/30">
-              <h3 className="text-xl font-bold text-red-500 mb-3">महत्वपूर्ण जानकारी</h3>
+              <h3 className="text-xl font-bold text-blue-600 mb-3">महत्वपूर्ण जानकारी</h3>
               <ul className="space-y-2">
                 {hindiPoints.map((point, idx) => (
                   <li key={idx} className="flex items-start gap-2 text-foreground text-sm">
-                    <span className="text-red-500 mt-0.5">•</span>
+                    <span className="text-blue-600 mt-0.5">•</span>
                     <span>{point}</span>
                   </li>
                 ))}
