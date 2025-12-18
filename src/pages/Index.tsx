@@ -23,7 +23,9 @@ interface QuizData {
 interface AudioItem {
   index: number;
   question: QuizQuestion;
-  audioBlob: Blob | null;
+  questionAudio: Blob | null;
+  answerAudio: Blob | null;
+  detailsAudio: Blob | null;
   status: "pending" | "downloading" | "done" | "error";
 }
 
@@ -38,7 +40,7 @@ const Index = () => {
   const [showFooter, setShowFooter] = useState(true);
   const [displayPhase, setDisplayPhase] = useState<DisplayPhase>("question");
   const [isGenerating, setIsGenerating] = useState(false);
-  
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const { toast } = useToast();
@@ -59,14 +61,16 @@ const Index = () => {
         parsed.data.map((q, i) => ({
           index: i,
           question: q,
-          audioBlob: null,
+          questionAudio: null,
+          answerAudio: null,
+          detailsAudio: null,
           status: "pending",
         }))
       );
       setCurrentIndex(0);
       setDisplayPhase("question");
       toast({ title: `Loaded ${parsed.data.length} questions` });
-      
+
       // Auto-start generating audio
       generateAllAudio(parsed.data);
     } catch (e) {
@@ -76,7 +80,7 @@ const Index = () => {
 
   const generateAllAudio = async (questions: QuizQuestion[]) => {
     setIsGenerating(true);
-    
+
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
       setAudioItems((prev) =>
@@ -85,25 +89,38 @@ const Index = () => {
         )
       );
 
-      const script = `${q.question_script}. Answer is ${q.answer}. ${q.extra_details_speech_script}`;
-      const blob = await fetchAudioForText(script);
+      // Generate three separate audio files
+      const questionBlob = await fetchAudioForText(q.question_script);
+      const answerBlob = await fetchAudioForText(`The answer is ${q.answer}`);
+      const detailsBlob = await fetchAudioForText(q.extra_details_speech_script);
 
       setAudioItems((prev) =>
         prev.map((item) =>
           item.index === i
-            ? { ...item, audioBlob: blob, status: blob ? "done" : "error" }
+            ? {
+              ...item,
+              questionAudio: questionBlob,
+              answerAudio: answerBlob,
+              detailsAudio: detailsBlob,
+              status: (questionBlob && answerBlob && detailsBlob) ? "done" : "error"
+            }
             : item
         )
       );
     }
-    
+
     setIsGenerating(false);
     toast({ title: "All audio generated!" });
+
+    // Auto-start playing the first question
+    setTimeout(() => {
+      playCurrentQuestion();
+    }, 1000);
   };
 
   const playCurrentQuestion = useCallback(() => {
     const item = audioItems[currentIndex];
-    if (!item || item.status !== "done" || !item.audioBlob) {
+    if (!item || item.status !== "done" || !item.questionAudio) {
       toast({ title: "Audio not ready yet", variant: "destructive" });
       return;
     }
@@ -113,33 +130,71 @@ const Index = () => {
     }
     clearTimeouts();
 
-    const url = URL.createObjectURL(item.audioBlob);
-    const audio = new Audio(url);
-    audioRef.current = audio;
-    
     setIsPlaying(true);
     setDisplayPhase("question");
-    
-    // Show answer after 3 seconds
-    const t1 = setTimeout(() => setDisplayPhase("answer"), 3000);
-    // Show details after 6 seconds
-    const t2 = setTimeout(() => setDisplayPhase("details"), 6000);
-    timeoutsRef.current.push(t1, t2);
-    
-    audio.play();
-    
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
+
+    // Play question audio first
+    const questionUrl = URL.createObjectURL(item.questionAudio);
+    const questionAudio = new Audio(questionUrl);
+    audioRef.current = questionAudio;
+
+    questionAudio.play();
+
+    questionAudio.onended = () => {
+      URL.revokeObjectURL(questionUrl);
+
+      // Show answer and play answer audio
+      setDisplayPhase("answer");
+
+      if (!item.answerAudio) {
+        moveToDetails();
+        return;
+      }
+
+      const answerUrl = URL.createObjectURL(item.answerAudio);
+      const answerAudio = new Audio(answerUrl);
+      audioRef.current = answerAudio;
+
+      answerAudio.play();
+
+      answerAudio.onended = () => {
+        URL.revokeObjectURL(answerUrl);
+        moveToDetails();
+      };
+    };
+
+    const moveToDetails = () => {
+      // Show details and play details audio
+      setDisplayPhase("details");
+
+      if (!item.detailsAudio) {
+        finishQuestion();
+        return;
+      }
+
+      const detailsUrl = URL.createObjectURL(item.detailsAudio);
+      const detailsAudio = new Audio(detailsUrl);
+      audioRef.current = detailsAudio;
+
+      detailsAudio.play();
+
+      detailsAudio.onended = () => {
+        URL.revokeObjectURL(detailsUrl);
+        finishQuestion();
+      };
+    };
+
+    const finishQuestion = () => {
       setIsPlaying(false);
-      
-      // Auto move to next question after 2 seconds
-      const t3 = setTimeout(() => {
+
+      // Auto advance to next question after 2 seconds
+      const t = setTimeout(() => {
         if (currentIndex < audioItems.length - 1) {
           setCurrentIndex((prev) => prev + 1);
           setDisplayPhase("question");
         }
       }, 2000);
-      timeoutsRef.current.push(t3);
+      timeoutsRef.current.push(t);
     };
   }, [audioItems, currentIndex, toast]);
 
@@ -182,8 +237,17 @@ const Index = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [quizData, playCurrentQuestion, isPlaying]);
 
+  // Auto-play when index changes (for auto-advance)
+  useEffect(() => {
+    if (!isPlaying && currentIndex > 0 && audioItems[currentIndex]?.status === "done") {
+      setTimeout(() => {
+        playCurrentQuestion();
+      }, 500);
+    }
+  }, [currentIndex]);
+
   const mergeAndDownloadAll = async () => {
-    const completed = audioItems.filter((a) => a.status === "done" && a.audioBlob);
+    const completed = audioItems.filter((a) => a.status === "done" && a.questionAudio);
     if (completed.length === 0) {
       toast({ title: "No audio to download", variant: "destructive" });
       return;
@@ -197,30 +261,34 @@ const Index = () => {
     let bitsPerSample = 16;
 
     for (const item of completed) {
-      if (!item.audioBlob) continue;
-      const arrayBuffer = await item.audioBlob.arrayBuffer();
-      const view = new DataView(arrayBuffer);
-      
-      if (audioDataArray.length === 0) {
-        sampleRate = view.getUint32(24, true);
-        numChannels = view.getUint16(22, true);
-        bitsPerSample = view.getUint16(34, true);
+      // Merge all three audio files for each question
+      const audios = [item.questionAudio, item.answerAudio, item.detailsAudio].filter(Boolean) as Blob[];
+
+      for (const blob of audios) {
+        const arrayBuffer = await blob.arrayBuffer();
+        const view = new DataView(arrayBuffer);
+
+        if (audioDataArray.length === 0) {
+          sampleRate = view.getUint32(24, true);
+          numChannels = view.getUint16(22, true);
+          bitsPerSample = view.getUint16(34, true);
+        }
+
+        const pcmData = arrayBuffer.slice(44);
+        audioDataArray.push(pcmData);
       }
-      
-      const pcmData = arrayBuffer.slice(44);
-      audioDataArray.push(pcmData);
     }
 
     const totalSize = audioDataArray.reduce((sum, buf) => sum + buf.byteLength, 0);
     const mergedBuffer = new ArrayBuffer(44 + totalSize);
     const mergedView = new DataView(mergedBuffer);
-    
+
     const writeString = (offset: number, str: string) => {
       for (let i = 0; i < str.length; i++) {
         mergedView.setUint8(offset + i, str.charCodeAt(i));
       }
     };
-    
+
     writeString(0, 'RIFF');
     mergedView.setUint32(4, 36 + totalSize, true);
     writeString(8, 'WAVE');
@@ -234,13 +302,13 @@ const Index = () => {
     mergedView.setUint16(34, bitsPerSample, true);
     writeString(36, 'data');
     mergedView.setUint32(40, totalSize, true);
-    
+
     let offset = 44;
     for (const pcmData of audioDataArray) {
       new Uint8Array(mergedBuffer, offset).set(new Uint8Array(pcmData));
       offset += pcmData.byteLength;
     }
-    
+
     const blob = new Blob([mergedBuffer], { type: 'audio/wav' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -255,9 +323,9 @@ const Index = () => {
   const parseExtraDetails = (details: string) => {
     const englishPoints: string[] = [];
     const hindiPoints: string[] = [];
-    
+
     const lines = details.split('\n').filter(line => line.trim().startsWith('-'));
-    
+
     lines.forEach(line => {
       const cleanLine = line.replace(/^-\s*\*\*/, '').replace(/\*\*/g, '').replace(/^-\s*/, '').trim();
       if (/[\u0900-\u097F]/.test(cleanLine)) {
@@ -266,7 +334,7 @@ const Index = () => {
         englishPoints.push(cleanLine);
       }
     });
-    
+
     return { englishPoints, hindiPoints };
   };
 
@@ -294,8 +362,8 @@ const Index = () => {
     );
   }
 
-  const { englishPoints, hindiPoints } = currentQuestion 
-    ? parseExtraDetails(currentQuestion.extra_details) 
+  const { englishPoints, hindiPoints } = currentQuestion
+    ? parseExtraDetails(currentQuestion.extra_details)
     : { englishPoints: [], hindiPoints: [] };
 
   return (
@@ -317,15 +385,14 @@ const Index = () => {
           {currentQuestion?.options.map((option, idx) => {
             const isCorrect = option === currentQuestion.answer;
             const showAsCorrect = displayPhase !== "question" && isCorrect;
-            
+
             return (
               <button
                 key={idx}
-                className={`py-3 px-4 rounded-full border-2 text-center font-medium transition-all ${
-                  showAsCorrect
-                    ? "bg-green-500 border-green-500 text-white"
-                    : "border-muted-foreground/30 text-foreground hover:border-primary"
-                }`}
+                className={`py-3 px-4 rounded-full border-2 text-center font-medium transition-all ${showAsCorrect
+                  ? "bg-green-500 border-green-500 text-white"
+                  : "border-muted-foreground/30 text-foreground hover:border-primary"
+                  }`}
               >
                 {option}
               </button>
@@ -400,7 +467,7 @@ const Index = () => {
             >
               <ChevronLeft className="h-5 w-5" />
             </Button>
-            
+
             <Button
               variant="default"
               size="icon"
@@ -410,7 +477,7 @@ const Index = () => {
             >
               {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6 ml-0.5" />}
             </Button>
-            
+
             <Button
               variant="default"
               size="icon"
