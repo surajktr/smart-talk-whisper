@@ -125,25 +125,83 @@ const Index = () => {
     URL.revokeObjectURL(url);
   };
 
-  const downloadAll = () => {
+  const mergeAndDownloadAll = async () => {
     const completed = audioItems.filter((a) => a.status === "done" && a.audioBlob);
     if (completed.length === 0) {
       toast({ title: "No audio to download", variant: "destructive" });
       return;
     }
 
-    completed.forEach((item) => {
-      if (item.audioBlob) {
-        const url = URL.createObjectURL(item.audioBlob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `question_${item.index + 1}.wav`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    });
+    toast({ title: "Merging audio files..." });
 
-    toast({ title: `Downloading ${completed.length} files` });
+    // Read all WAV files and extract PCM data
+    const audioDataArray: ArrayBuffer[] = [];
+    let sampleRate = 24000;
+    let numChannels = 1;
+    let bitsPerSample = 16;
+
+    for (const item of completed) {
+      if (!item.audioBlob) continue;
+      const arrayBuffer = await item.audioBlob.arrayBuffer();
+      const view = new DataView(arrayBuffer);
+      
+      // Read WAV header info from first file
+      if (audioDataArray.length === 0) {
+        sampleRate = view.getUint32(24, true);
+        numChannels = view.getUint16(22, true);
+        bitsPerSample = view.getUint16(34, true);
+      }
+      
+      // Extract PCM data (skip 44-byte header)
+      const pcmData = arrayBuffer.slice(44);
+      audioDataArray.push(pcmData);
+    }
+
+    // Calculate total size
+    const totalSize = audioDataArray.reduce((sum, buf) => sum + buf.byteLength, 0);
+    
+    // Create merged WAV file
+    const mergedBuffer = new ArrayBuffer(44 + totalSize);
+    const mergedView = new DataView(mergedBuffer);
+    
+    const writeString = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        mergedView.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+    
+    // Write WAV header
+    writeString(0, 'RIFF');
+    mergedView.setUint32(4, 36 + totalSize, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    mergedView.setUint32(16, 16, true);
+    mergedView.setUint16(20, 1, true);
+    mergedView.setUint16(22, numChannels, true);
+    mergedView.setUint32(24, sampleRate, true);
+    mergedView.setUint32(28, sampleRate * numChannels * (bitsPerSample / 8), true);
+    mergedView.setUint16(32, numChannels * (bitsPerSample / 8), true);
+    mergedView.setUint16(34, bitsPerSample, true);
+    writeString(36, 'data');
+    mergedView.setUint32(40, totalSize, true);
+    
+    // Write all PCM data
+    let offset = 44;
+    for (const pcmData of audioDataArray) {
+      new Uint8Array(mergedBuffer, offset).set(new Uint8Array(pcmData));
+      offset += pcmData.byteLength;
+    }
+    
+    // Download merged file
+    const blob = new Blob([mergedBuffer], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `quiz_${quizData?.date || 'audio'}_merged.wav`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    toast({ title: `Downloaded merged file (${completed.length} questions)` });
   };
 
   const completedCount = audioItems.filter((a) => a.status === "done").length;
@@ -219,14 +277,14 @@ const Index = () => {
                     </Button>
                   )}
                   <Button
-                    onClick={downloadAll}
+                    onClick={mergeAndDownloadAll}
                     variant="outline"
                     size="lg"
                     disabled={completedCount === 0}
                     className="border-purple-500/50 text-purple-300 hover:bg-purple-500/20"
                   >
                     <Download className="mr-2 h-5 w-5" />
-                    Download All ({completedCount})
+                    Download Merged ({completedCount})
                   </Button>
                 </div>
               </CardContent>
