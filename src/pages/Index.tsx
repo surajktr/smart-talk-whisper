@@ -60,7 +60,13 @@ const Index = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioItemsRef = useRef<AudioItem[]>([]);
   const currentIndexRef = useRef(0);
+  const autoPlayModeRef = useRef(false);
   const { toast } = useToast();
+
+  // Keep autoPlayMode ref in sync
+  useEffect(() => {
+    autoPlayModeRef.current = autoPlayMode;
+  }, [autoPlayMode]);
 
   // Keep refs in sync
   useEffect(() => {
@@ -155,6 +161,98 @@ const Index = () => {
     toast({ title: "All audio ready! Press H to start." });
   };
 
+  const finishAndAdvance = useCallback((index: number) => {
+    setIsPlaying(false);
+
+    const items = audioItemsRef.current;
+    const isAutoPlay = autoPlayModeRef.current;
+    
+    console.log("finishAndAdvance called", { index, isAutoPlay, totalItems: items.length });
+    
+    if (isAutoPlay && index < items.length - 1) {
+      console.log("Auto-advancing to next question:", index + 1);
+      // Will trigger playQuestionAtIndex after delay
+      setTimeout(() => {
+        const nextIndex = index + 1;
+        const nextItem = audioItemsRef.current[nextIndex];
+        
+        if (!nextItem || nextItem.status !== "done" || !nextItem.questionAudio) {
+          toast({ title: "Audio not ready yet", variant: "destructive" });
+          setAutoPlayMode(false);
+          return;
+        }
+
+        if (audioRef.current) {
+          audioRef.current.pause();
+        }
+
+        setCurrentIndex(nextIndex);
+        setIsPlaying(true);
+        setDisplayPhase("question");
+
+        playAudioSequence(nextItem, nextIndex);
+      }, 1000);
+    } else if (index >= items.length - 1) {
+      setAutoPlayMode(false);
+      toast({ title: "Quiz completed!" });
+    }
+  }, [toast]);
+
+  const playAudioSequence = useCallback((item: AudioItem, index: number) => {
+    const questionUrl = URL.createObjectURL(item.questionAudio!);
+    const questionAudio = new Audio(questionUrl);
+    audioRef.current = questionAudio;
+    questionAudio.play();
+
+    questionAudio.onended = () => {
+      URL.revokeObjectURL(questionUrl);
+      setDisplayPhase("answer");
+
+      if (!item.answerAudio) {
+        // Skip to details
+        setDisplayPhase("details");
+        if (!item.detailsAudio) {
+          finishAndAdvance(index);
+          return;
+        }
+        const detailsUrl = URL.createObjectURL(item.detailsAudio);
+        const detailsAudio = new Audio(detailsUrl);
+        audioRef.current = detailsAudio;
+        detailsAudio.play();
+        detailsAudio.onended = () => {
+          URL.revokeObjectURL(detailsUrl);
+          finishAndAdvance(index);
+        };
+        return;
+      }
+
+      const answerUrl = URL.createObjectURL(item.answerAudio);
+      const answerAudio = new Audio(answerUrl);
+      audioRef.current = answerAudio;
+      answerAudio.play();
+
+      answerAudio.onended = () => {
+        URL.revokeObjectURL(answerUrl);
+        setDisplayPhase("details");
+
+        if (!item.detailsAudio) {
+          finishAndAdvance(index);
+          return;
+        }
+
+        const detailsUrl = URL.createObjectURL(item.detailsAudio);
+        const detailsAudio = new Audio(detailsUrl);
+        audioRef.current = detailsAudio;
+        detailsAudio.play();
+
+        detailsAudio.onended = () => {
+          URL.revokeObjectURL(detailsUrl);
+          finishAndAdvance(index);
+        };
+      };
+    };
+  }, [finishAndAdvance]);
+
   const playQuestionAtIndex = useCallback((index: number) => {
     const items = audioItemsRef.current;
     const item = items[index];
@@ -173,64 +271,8 @@ const Index = () => {
     setIsPlaying(true);
     setDisplayPhase("question");
 
-    const questionUrl = URL.createObjectURL(item.questionAudio);
-    const questionAudio = new Audio(questionUrl);
-    audioRef.current = questionAudio;
-    questionAudio.play();
-
-    questionAudio.onended = () => {
-      URL.revokeObjectURL(questionUrl);
-      setDisplayPhase("answer");
-
-      if (!item.answerAudio) {
-        playDetails(item, index);
-        return;
-      }
-
-      const answerUrl = URL.createObjectURL(item.answerAudio);
-      const answerAudio = new Audio(answerUrl);
-      audioRef.current = answerAudio;
-      answerAudio.play();
-
-      answerAudio.onended = () => {
-        URL.revokeObjectURL(answerUrl);
-        playDetails(item, index);
-      };
-    };
-  }, [toast]);
-
-  const playDetails = (item: AudioItem, index: number) => {
-    setDisplayPhase("details");
-
-    if (!item.detailsAudio) {
-      finishAndAdvance(index);
-      return;
-    }
-
-    const detailsUrl = URL.createObjectURL(item.detailsAudio);
-    const detailsAudio = new Audio(detailsUrl);
-    audioRef.current = detailsAudio;
-    detailsAudio.play();
-
-    detailsAudio.onended = () => {
-      URL.revokeObjectURL(detailsUrl);
-      finishAndAdvance(index);
-    };
-  };
-
-  const finishAndAdvance = (index: number) => {
-    setIsPlaying(false);
-
-    const items = audioItemsRef.current;
-    if (autoPlayMode && index < items.length - 1) {
-      setTimeout(() => {
-        playQuestionAtIndex(index + 1);
-      }, 1000);
-    } else if (index >= items.length - 1) {
-      setAutoPlayMode(false);
-      toast({ title: "Quiz completed!" });
-    }
-  };
+    playAudioSequence(item, index);
+  }, [toast, playAudioSequence]);
 
   const startAutoPlay = useCallback(() => {
     if (!allReady) {
