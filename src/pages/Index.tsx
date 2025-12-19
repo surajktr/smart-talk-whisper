@@ -62,6 +62,7 @@ const Index = () => {
   const currentIndexRef = useRef(0);
   const { toast } = useToast();
 
+  // Keep refs in sync
   useEffect(() => {
     audioItemsRef.current = audioItems;
   }, [audioItems]);
@@ -70,6 +71,7 @@ const Index = () => {
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
 
+  // Handle phase changes for confetti and details
   useEffect(() => {
     if (displayPhase === "answer") {
       setShowConfetti(true);
@@ -110,7 +112,7 @@ const Index = () => {
       setDisplayPhase("question");
       setAllReady(false);
       setAutoPlayMode(false);
-      toast({ title: `Loaded ${parsed.data.length} questions. Starting audio generation...` });
+      toast({ title: `Loaded ${parsed.data.length} questions` });
 
       generateAllAudio(parsed.data);
     } catch (e) {
@@ -129,9 +131,8 @@ const Index = () => {
         )
       );
 
-      // Fetch audio for all parts. The answer script is now bilingual to match other scripts.
       const questionBlob = await fetchAudioForText(q.question_script);
-      const answerBlob = await fetchAudioForText(`The correct answer is ${q.answer}. सही उत्तर है ${q.answer}.`);
+      const answerBlob = await fetchAudioForText(`The correct answer is ${q.answer}`);
       const detailsBlob = await fetchAudioForText(q.extra_details_speech_script);
 
       setAudioItems((prev) =>
@@ -151,7 +152,7 @@ const Index = () => {
 
     setIsGenerating(false);
     setAllReady(true);
-    toast({ title: "All audio files are ready for playback." });
+    toast({ title: "All audio ready! Press H to start." });
   };
 
   const playQuestionAtIndex = useCallback((index: number) => {
@@ -233,11 +234,11 @@ const Index = () => {
 
   const startAutoPlay = useCallback(() => {
     if (!allReady) {
-      toast({ title: "Please wait until all audio is generated.", variant: "destructive" });
+      toast({ title: "Audio still generating...", variant: "destructive" });
       return;
     }
     setAutoPlayMode(true);
-    setShowFooter(false);
+    setShowFooter(false); // Collapse footer when starting
     playQuestionAtIndex(currentIndexRef.current);
   }, [allReady, playQuestionAtIndex, toast]);
 
@@ -266,6 +267,21 @@ const Index = () => {
     }
   };
 
+  // H key handler - start auto-play after 1 second delay and collapse footer
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "h" && quizData && allReady && !isPlaying) {
+        setShowFooter(false); // Collapse footer immediately
+        setTimeout(() => {
+          startAutoPlay();
+        }, 1000);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [quizData, allReady, isPlaying, startAutoPlay]);
+
   const mergeAndDownloadAll = async () => {
     const completed = audioItems.filter((a) => a.status === "done" && a.questionAudio);
     if (completed.length === 0) {
@@ -282,14 +298,17 @@ const Index = () => {
 
     for (const item of completed) {
       const audios = [item.questionAudio, item.answerAudio, item.detailsAudio].filter(Boolean) as Blob[];
+
       for (const blob of audios) {
         const arrayBuffer = await blob.arrayBuffer();
         const view = new DataView(arrayBuffer);
+
         if (audioDataArray.length === 0) {
           sampleRate = view.getUint32(24, true);
           numChannels = view.getUint16(22, true);
           bitsPerSample = view.getUint16(34, true);
         }
+
         const pcmData = arrayBuffer.slice(44);
         audioDataArray.push(pcmData);
       }
@@ -332,13 +351,16 @@ const Index = () => {
     a.download = `quiz_${quizData?.date || 'audio'}_merged.wav`;
     a.click();
     URL.revokeObjectURL(url);
+
     toast({ title: `Downloaded merged file (${completed.length} questions)` });
   };
 
   const parseExtraDetails = (details: string) => {
     const englishPoints: string[] = [];
     const hindiPoints: string[] = [];
+
     const lines = details.split('\n').filter(line => line.trim().startsWith('-'));
+
     lines.forEach(line => {
       const cleanLine = line.substring(1).trim().replace(/\*\*/g, '');
       if (/[\u0900-\u097F]/.test(cleanLine)) {
@@ -347,12 +369,15 @@ const Index = () => {
         englishPoints.push(cleanLine);
       }
     });
+
     return { englishPoints, hindiPoints };
   };
 
   const currentQuestion = quizData?.data[currentIndex];
+  const currentAudioItem = audioItems[currentIndex];
   const completedCount = audioItems.filter((a) => a.status === "done").length;
 
+  // Initial JSON input view
   if (!quizData) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -380,7 +405,10 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-[#f5f5f5] flex flex-col">
+      {/* Main Content */}
       <div className="flex-1 w-full px-6 md:px-12 mx-auto flex flex-col gap-5 py-6 overflow-y-auto">
+        
+        {/* Question Box */}
         <div className="bg-white text-black border-2 border-black p-5 rounded-[15px] shadow-[0_4px_10px_rgba(0,0,0,0.1)]">
           <div className="text-lg md:text-[18px] font-bold mb-2 leading-[1.4] flex gap-2">
             <span>{currentIndex + 1}.</span>
@@ -391,10 +419,12 @@ const Index = () => {
           </div>
         </div>
 
+        {/* Options Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-[15px]">
           {currentQuestion?.options.map((option, idx) => {
             const isCorrect = option === currentQuestion.answer;
             const isRevealedAndCorrect = isAnswerRevealed && isCorrect;
+
             return (
               <div
                 key={idx}
@@ -404,6 +434,7 @@ const Index = () => {
                     : 'bg-white border-[#102C57] text-[#102C57] hover:bg-[#f0f8ff]'
                   }`}
               >
+                {/* Confetti */}
                 {isRevealedAndCorrect && showConfetti && (
                   <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-[50px]">
                     {Array.from({ length: 15 }).map((_, j) => (
@@ -425,11 +456,14 @@ const Index = () => {
           })}
         </div>
 
+        {/* Info Cards - shown in details phase */}
         <div className={`flex flex-col md:flex-row gap-5 transition-all duration-700 ease-in-out ${
           displayPhase === "details" && showDetails 
             ? 'opacity-100 translate-y-0' 
             : 'opacity-0 translate-y-4 pointer-events-none h-0 overflow-hidden'
         }`}>
+          
+          {/* Key Points Card */}
           <div className="flex-1 bg-white p-5 rounded-[15px] shadow-[0_4px_15px_rgba(0,0,0,0.05)]">
             <div className="text-[24px] font-bold text-[#0F5298] mb-[15px]">Key Points</div>
             <ul className="list-none">
@@ -439,9 +473,13 @@ const Index = () => {
                   {point}
                 </li>
               ))}
+              {englishPoints.length === 0 && (
+                <li className="text-gray-400 italic text-sm">No additional English details available.</li>
+              )}
             </ul>
           </div>
 
+          {/* Hindi Details Card */}
           <div className="flex-1 bg-white p-5 rounded-[15px] shadow-[0_4px_15px_rgba(0,0,0,0.05)]">
             <div className="text-[24px] font-bold text-[#0F5298] mb-[15px]">महत्वपूर्ण जानकारी</div>
             <ul className="list-none">
@@ -451,11 +489,15 @@ const Index = () => {
                   {point}
                 </li>
               ))}
+              {hindiPoints.length === 0 && (
+                <li className="text-gray-400 italic text-sm">कोई अतिरिक्त जानकारी उपलब्ध नहीं है।</li>
+              )}
             </ul>
           </div>
         </div>
       </div>
 
+      {/* Footer Toggle */}
       <button
         onClick={() => setShowFooter(!showFooter)}
         className="mx-auto mb-1 p-1 rounded-full hover:bg-white/50"
@@ -463,20 +505,23 @@ const Index = () => {
         {showFooter ? <ChevronDown className="h-6 w-6" /> : <ChevronUp className="h-6 w-6" />}
       </button>
 
+      {/* Footer Controls */}
       {showFooter && (
         <div className="border-t bg-white p-3 flex items-center justify-between shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
+          {/* Left - Status */}
           <div className="flex items-center gap-2 text-sm text-muted-foreground min-w-[120px]">
             {isGenerating && (
-              <span className="animate-pulse">Generating Audio: {completedCount}/{audioItems.length}</span>
+              <span className="animate-pulse">Generating: {completedCount}/{audioItems.length}</span>
             )}
             {!isGenerating && allReady && !isPlaying && (
-              <span className="text-green-500 font-semibold">Ready to Play</span>
+              <span className="text-green-500 font-semibold">Ready - Press H</span>
             )}
             {!isGenerating && isPlaying && (
               <span className="text-[#0F5298] animate-pulse font-semibold">Playing...</span>
             )}
           </div>
 
+          {/* Center - Playback Controls */}
           <div className="flex items-center gap-2">
             <Button
               variant="default"
@@ -509,6 +554,7 @@ const Index = () => {
             </Button>
           </div>
 
+          {/* Right - Download & Counter */}
           <div className="flex items-center gap-3 min-w-[120px] justify-end">
             <Button
               variant="ghost"
