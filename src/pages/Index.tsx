@@ -40,15 +40,22 @@ const Index = () => {
   const [showFooter, setShowFooter] = useState(true);
   const [displayPhase, setDisplayPhase] = useState<DisplayPhase>("question");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [allReady, setAllReady] = useState(false);
+  const [autoPlayMode, setAutoPlayMode] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const audioItemsRef = useRef<AudioItem[]>([]);
+  const currentIndexRef = useRef(0);
   const { toast } = useToast();
 
-  const clearTimeouts = () => {
-    timeoutsRef.current.forEach(clearTimeout);
-    timeoutsRef.current = [];
-  };
+  // Keep refs in sync
+  useEffect(() => {
+    audioItemsRef.current = audioItems;
+  }, [audioItems]);
+
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
 
   const parseJson = () => {
     try {
@@ -69,6 +76,8 @@ const Index = () => {
       );
       setCurrentIndex(0);
       setDisplayPhase("question");
+      setAllReady(false);
+      setAutoPlayMode(false);
       toast({ title: `Loaded ${parsed.data.length} questions` });
 
       // Auto-start generating audio
@@ -89,9 +98,9 @@ const Index = () => {
         )
       );
 
-      // Generate three separate audio files
+      // Generate three separate audio files via Gemini TTS
       const questionBlob = await fetchAudioForText(q.question_script);
-      const answerBlob = await fetchAudioForText(`The answer is ${q.answer}`);
+      const answerBlob = await fetchAudioForText(`The correct answer is ${q.answer}`);
       const detailsBlob = await fetchAudioForText(q.extra_details_speech_script);
 
       setAudioItems((prev) =>
@@ -110,34 +119,32 @@ const Index = () => {
     }
 
     setIsGenerating(false);
-    toast({ title: "All audio generated!" });
-
-    // Auto-start playing the first question
-    setTimeout(() => {
-      playCurrentQuestion();
-    }, 1000);
+    setAllReady(true);
+    toast({ title: "All audio ready! Press H to start." });
   };
 
-  const playCurrentQuestion = useCallback(() => {
-    const item = audioItems[currentIndex];
+  const playQuestionAtIndex = useCallback((index: number) => {
+    const items = audioItemsRef.current;
+    const item = items[index];
+
     if (!item || item.status !== "done" || !item.questionAudio) {
       toast({ title: "Audio not ready yet", variant: "destructive" });
+      setAutoPlayMode(false);
       return;
     }
 
     if (audioRef.current) {
       audioRef.current.pause();
     }
-    clearTimeouts();
 
+    setCurrentIndex(index);
     setIsPlaying(true);
     setDisplayPhase("question");
 
-    // Play question audio first
+    // Play question audio
     const questionUrl = URL.createObjectURL(item.questionAudio);
     const questionAudio = new Audio(questionUrl);
     audioRef.current = questionAudio;
-
     questionAudio.play();
 
     questionAudio.onended = () => {
@@ -147,64 +154,72 @@ const Index = () => {
       setDisplayPhase("answer");
 
       if (!item.answerAudio) {
-        moveToDetails();
+        playDetails(item, index);
         return;
       }
 
       const answerUrl = URL.createObjectURL(item.answerAudio);
       const answerAudio = new Audio(answerUrl);
       audioRef.current = answerAudio;
-
       answerAudio.play();
 
       answerAudio.onended = () => {
         URL.revokeObjectURL(answerUrl);
-        moveToDetails();
+        playDetails(item, index);
       };
     };
+  }, [toast]);
 
-    const moveToDetails = () => {
-      // Show details and play details audio
-      setDisplayPhase("details");
+  const playDetails = (item: AudioItem, index: number) => {
+    setDisplayPhase("details");
 
-      if (!item.detailsAudio) {
-        finishQuestion();
-        return;
-      }
+    if (!item.detailsAudio) {
+      finishAndAdvance(index);
+      return;
+    }
 
-      const detailsUrl = URL.createObjectURL(item.detailsAudio);
-      const detailsAudio = new Audio(detailsUrl);
-      audioRef.current = detailsAudio;
+    const detailsUrl = URL.createObjectURL(item.detailsAudio);
+    const detailsAudio = new Audio(detailsUrl);
+    audioRef.current = detailsAudio;
+    detailsAudio.play();
 
-      detailsAudio.play();
-
-      detailsAudio.onended = () => {
-        URL.revokeObjectURL(detailsUrl);
-        finishQuestion();
-      };
+    detailsAudio.onended = () => {
+      URL.revokeObjectURL(detailsUrl);
+      finishAndAdvance(index);
     };
+  };
 
-    const finishQuestion = () => {
-      setIsPlaying(false);
+  const finishAndAdvance = (index: number) => {
+    setIsPlaying(false);
 
-      // Auto advance to next question after 2 seconds
-      const t = setTimeout(() => {
-        if (currentIndex < audioItems.length - 1) {
-          setCurrentIndex((prev) => prev + 1);
-          setDisplayPhase("question");
-        }
-      }, 2000);
-      timeoutsRef.current.push(t);
-    };
-  }, [audioItems, currentIndex, toast]);
+    const items = audioItemsRef.current;
+    // Auto advance to next question
+    if (autoPlayMode && index < items.length - 1) {
+      setTimeout(() => {
+        playQuestionAtIndex(index + 1);
+      }, 1000);
+    } else if (index >= items.length - 1) {
+      setAutoPlayMode(false);
+      toast({ title: "Quiz completed!" });
+    }
+  };
+
+  const startAutoPlay = useCallback(() => {
+    if (!allReady) {
+      toast({ title: "Audio still generating...", variant: "destructive" });
+      return;
+    }
+    setAutoPlayMode(true);
+    playQuestionAtIndex(currentIndexRef.current);
+  }, [allReady, playQuestionAtIndex, toast]);
 
   const stopPlayback = () => {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
-    clearTimeouts();
     setIsPlaying(false);
+    setAutoPlayMode(false);
   };
 
   const goToPrevious = () => {
@@ -223,28 +238,19 @@ const Index = () => {
     }
   };
 
-  // H key handler - play after 1 second delay
+  // H key handler - start auto-play after 1 second delay
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "h" && quizData && !isPlaying) {
+      if (e.key.toLowerCase() === "h" && quizData && allReady && !isPlaying) {
         setTimeout(() => {
-          playCurrentQuestion();
+          startAutoPlay();
         }, 1000);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [quizData, playCurrentQuestion, isPlaying]);
-
-  // Auto-play when index changes (for auto-advance)
-  useEffect(() => {
-    if (!isPlaying && currentIndex > 0 && audioItems[currentIndex]?.status === "done") {
-      setTimeout(() => {
-        playCurrentQuestion();
-      }, 500);
-    }
-  }, [currentIndex]);
+  }, [quizData, allReady, isPlaying, startAutoPlay]);
 
   const mergeAndDownloadAll = async () => {
     const completed = audioItems.filter((a) => a.status === "done" && a.questionAudio);
@@ -261,7 +267,6 @@ const Index = () => {
     let bitsPerSample = 16;
 
     for (const item of completed) {
-      // Merge all three audio files for each question
       const audios = [item.questionAudio, item.answerAudio, item.detailsAudio].filter(Boolean) as Blob[];
 
       for (const blob of audios) {
@@ -448,11 +453,11 @@ const Index = () => {
             {isGenerating && (
               <span className="animate-pulse">Generating: {completedCount}/{audioItems.length}</span>
             )}
-            {!isGenerating && currentAudioItem?.status === "downloading" && (
-              <span className="animate-pulse">Downloading...</span>
+            {!isGenerating && allReady && !isPlaying && (
+              <span className="text-green-500">Ready - Press H</span>
             )}
-            {!isGenerating && currentAudioItem?.status === "done" && (
-              <span className="text-green-500">Ready</span>
+            {!isGenerating && isPlaying && (
+              <span className="text-primary animate-pulse">Playing...</span>
             )}
           </div>
 
@@ -463,7 +468,7 @@ const Index = () => {
               size="icon"
               className="rounded-full h-10 w-10 bg-primary"
               onClick={goToPrevious}
-              disabled={currentIndex === 0}
+              disabled={currentIndex === 0 || isPlaying}
             >
               <ChevronLeft className="h-5 w-5" />
             </Button>
@@ -472,8 +477,8 @@ const Index = () => {
               variant="default"
               size="icon"
               className="rounded-full h-12 w-12 bg-primary"
-              onClick={isPlaying ? stopPlayback : playCurrentQuestion}
-              disabled={currentAudioItem?.status !== "done"}
+              onClick={isPlaying ? stopPlayback : startAutoPlay}
+              disabled={!allReady}
             >
               {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6 ml-0.5" />}
             </Button>
@@ -483,7 +488,7 @@ const Index = () => {
               size="icon"
               className="rounded-full h-10 w-10 bg-primary"
               onClick={goToNext}
-              disabled={currentIndex === audioItems.length - 1}
+              disabled={currentIndex === audioItems.length - 1 || isPlaying}
             >
               <ChevronRight className="h-5 w-5" />
             </Button>
