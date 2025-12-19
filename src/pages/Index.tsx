@@ -152,7 +152,7 @@ const Index = () => {
 
     setIsGenerating(false);
     setAllReady(true);
-    toast({ title: "All audio ready! Press H to start." });
+    toast({ title: "All audio ready!" });
   };
 
   const playQuestionAtIndex = useCallback((index: number) => {
@@ -267,21 +267,6 @@ const Index = () => {
     }
   };
 
-  // H key handler - start auto-play after 1 second delay and collapse footer
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "h" && quizData && allReady && !isPlaying) {
-        setShowFooter(false); // Collapse footer immediately
-        setTimeout(() => {
-          startAutoPlay();
-        }, 1000);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [quizData, allReady, isPlaying, startAutoPlay]);
-
   const mergeAndDownloadAll = async () => {
     const completed = audioItems.filter((a) => a.status === "done" && a.questionAudio);
     if (completed.length === 0) {
@@ -374,7 +359,6 @@ const Index = () => {
   };
 
   const currentQuestion = quizData?.data[currentIndex];
-  const currentAudioItem = audioItems[currentIndex];
   const completedCount = audioItems.filter((a) => a.status === "done").length;
 
   // Initial JSON input view
@@ -514,7 +498,7 @@ const Index = () => {
               <span className="animate-pulse">Generating: {completedCount}/{audioItems.length}</span>
             )}
             {!isGenerating && allReady && !isPlaying && (
-              <span className="text-green-500 font-semibold">Ready - Press H</span>
+              <span className="text-green-500 font-semibold">Ready</span>
             )}
             {!isGenerating && isPlaying && (
               <span className="text-[#0F5298] animate-pulse font-semibold">Playing...</span>
