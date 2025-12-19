@@ -5,7 +5,6 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchAudioForText } from "@/lib/gemini-audio";
 import { ChevronLeft, ChevronRight, Play, Pause, Download, ChevronUp, ChevronDown } from "lucide-react";
 
-// नए फ़ॉर्मेट के अनुसार इंटरफ़ेस
 interface QuizQuestion {
   question_en: string;
   question_hi: string;
@@ -32,17 +31,6 @@ interface AudioItem {
 
 type DisplayPhase = "question" | "answer" | "details";
 
-const ConfettiPiece: React.FC<{ style: React.CSSProperties }> = ({ style }) => {
-  const colors = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#cddc39', '#ffeb3b', '#ffc107', '#ff9800'];
-  const randomColor = colors[Math.floor(Math.random() * colors.length)];
-  return (
-    <div 
-      className="absolute w-2 h-2 rounded-sm animate-confetti-fall"
-      style={{ ...style, backgroundColor: randomColor }} 
-    />
-  );
-};
-
 const Index = () => {
   const [jsonInput, setJsonInput] = useState("");
   const [quizData, setQuizData] = useState<QuizData | null>(null);
@@ -54,14 +42,13 @@ const Index = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [allReady, setAllReady] = useState(false);
   const [autoPlayMode, setAutoPlayMode] = useState(false);
-  const [showConfetti, setShowConfetti] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioItemsRef = useRef<AudioItem[]>([]);
   const currentIndexRef = useRef(0);
   const { toast } = useToast();
 
+  // Keep refs in sync
   useEffect(() => {
     audioItemsRef.current = audioItems;
   }, [audioItems]);
@@ -69,25 +56,6 @@ const Index = () => {
   useEffect(() => {
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
-
-  useEffect(() => {
-    if (displayPhase === "answer") {
-      setShowConfetti(true);
-      const timer = setTimeout(() => setShowConfetti(false), 3000);
-      return () => clearTimeout(timer);
-    } else {
-      setShowConfetti(false);
-    }
-  }, [displayPhase, currentIndex]);
-
-  useEffect(() => {
-    if (displayPhase === "details") {
-      const timer = setTimeout(() => setShowDetails(true), 500);
-      return () => clearTimeout(timer);
-    } else {
-      setShowDetails(false);
-    }
-  }, [displayPhase, currentIndex]);
 
   const parseJson = () => {
     try {
@@ -110,8 +78,9 @@ const Index = () => {
       setDisplayPhase("question");
       setAllReady(false);
       setAutoPlayMode(false);
-      toast({ title: `Loaded ${parsed.data.length} questions. Generating audio...` });
+      toast({ title: `Loaded ${parsed.data.length} questions` });
 
+      // Auto-start generating audio
       generateAllAudio(parsed.data);
     } catch (e) {
       toast({ title: "Invalid JSON format", variant: "destructive" });
@@ -129,9 +98,9 @@ const Index = () => {
         )
       );
 
-      // द्विभाषी आवाज़ जनरेशन
+      // Generate three separate audio files via Gemini TTS
       const questionBlob = await fetchAudioForText(q.question_script);
-      const answerBlob = await fetchAudioForText(`The correct answer is ${q.answer}. सही उत्तर है ${q.answer}.`);
+      const answerBlob = await fetchAudioForText(`The correct answer is ${q.answer}`);
       const detailsBlob = await fetchAudioForText(q.extra_details_speech_script);
 
       setAudioItems((prev) =>
@@ -151,7 +120,7 @@ const Index = () => {
 
     setIsGenerating(false);
     setAllReady(true);
-    toast({ title: "All audio ready!" });
+    toast({ title: "All audio ready! Press H to start." });
   };
 
   const playQuestionAtIndex = useCallback((index: number) => {
@@ -172,6 +141,7 @@ const Index = () => {
     setIsPlaying(true);
     setDisplayPhase("question");
 
+    // Play question audio
     const questionUrl = URL.createObjectURL(item.questionAudio);
     const questionAudio = new Audio(questionUrl);
     audioRef.current = questionAudio;
@@ -179,6 +149,8 @@ const Index = () => {
 
     questionAudio.onended = () => {
       URL.revokeObjectURL(questionUrl);
+
+      // Show answer and play answer audio
       setDisplayPhase("answer");
 
       if (!item.answerAudio) {
@@ -219,7 +191,9 @@ const Index = () => {
 
   const finishAndAdvance = (index: number) => {
     setIsPlaying(false);
+
     const items = audioItemsRef.current;
+    // Auto advance to next question
     if (autoPlayMode && index < items.length - 1) {
       setTimeout(() => {
         playQuestionAtIndex(index + 1);
@@ -236,7 +210,6 @@ const Index = () => {
       return;
     }
     setAutoPlayMode(true);
-    setShowFooter(false);
     playQuestionAtIndex(currentIndexRef.current);
   }, [allReady, playQuestionAtIndex, toast]);
 
@@ -265,6 +238,20 @@ const Index = () => {
     }
   };
 
+  // H key handler - start auto-play after 1 second delay
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "h" && quizData && allReady && !isPlaying) {
+        setTimeout(() => {
+          startAutoPlay();
+        }, 1000);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [quizData, allReady, isPlaying, startAutoPlay]);
+
   const mergeAndDownloadAll = async () => {
     const completed = audioItems.filter((a) => a.status === "done" && a.questionAudio);
     if (completed.length === 0) {
@@ -273,6 +260,7 @@ const Index = () => {
     }
 
     toast({ title: "Merging audio files..." });
+
     const audioDataArray: ArrayBuffer[] = [];
     let sampleRate = 24000;
     let numChannels = 1;
@@ -280,23 +268,30 @@ const Index = () => {
 
     for (const item of completed) {
       const audios = [item.questionAudio, item.answerAudio, item.detailsAudio].filter(Boolean) as Blob[];
+
       for (const blob of audios) {
         const arrayBuffer = await blob.arrayBuffer();
         const view = new DataView(arrayBuffer);
+
         if (audioDataArray.length === 0) {
           sampleRate = view.getUint32(24, true);
           numChannels = view.getUint16(22, true);
           bitsPerSample = view.getUint16(34, true);
         }
-        audioDataArray.push(arrayBuffer.slice(44));
+
+        const pcmData = arrayBuffer.slice(44);
+        audioDataArray.push(pcmData);
       }
     }
 
     const totalSize = audioDataArray.reduce((sum, buf) => sum + buf.byteLength, 0);
     const mergedBuffer = new ArrayBuffer(44 + totalSize);
     const mergedView = new DataView(mergedBuffer);
+
     const writeString = (offset: number, str: string) => {
-      for (let i = 0; i < str.length; i++) mergedView.setUint8(offset + i, str.charCodeAt(i));
+      for (let i = 0; i < str.length; i++) {
+        mergedView.setUint8(offset + i, str.charCodeAt(i));
+      }
     };
 
     writeString(0, 'RIFF');
@@ -326,122 +321,192 @@ const Index = () => {
     a.download = `quiz_${quizData?.date || 'audio'}_merged.wav`;
     a.click();
     URL.revokeObjectURL(url);
+
+    toast({ title: `Downloaded merged file (${completed.length} questions)` });
   };
 
   const parseExtraDetails = (details: string) => {
     const englishPoints: string[] = [];
     const hindiPoints: string[] = [];
+
     const lines = details.split('\n').filter(line => line.trim().startsWith('-'));
+
     lines.forEach(line => {
-      const cleanLine = line.substring(1).trim().replace(/\*\*/g, '');
-      if (/[\u0900-\u097F]/.test(cleanLine)) hindiPoints.push(cleanLine);
-      else englishPoints.push(cleanLine);
+      const cleanLine = line.replace(/^-\s*\*\*/, '').replace(/\*\*/g, '').replace(/^-\s*/, '').trim();
+      if (/[\u0900-\u097F]/.test(cleanLine)) {
+        hindiPoints.push(cleanLine);
+      } else {
+        englishPoints.push(cleanLine);
+      }
     });
+
     return { englishPoints, hindiPoints };
   };
 
   const currentQuestion = quizData?.data[currentIndex];
+  const currentAudioItem = audioItems[currentIndex];
   const completedCount = audioItems.filter((a) => a.status === "done").length;
 
+  // Initial JSON input view
   if (!quizData) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="w-full max-w-2xl space-y-4">
-          <h1 className="text-2xl font-bold text-center">Quiz Voice Generator</h1>
+          <h1 className="text-2xl font-bold text-center text-foreground">Quiz Voice Generator</h1>
           <Textarea
             placeholder="Paste your quiz JSON here..."
             value={jsonInput}
             onChange={(e) => setJsonInput(e.target.value)}
             className="min-h-[300px] font-mono text-sm"
           />
-          <Button onClick={parseJson} className="w-full" size="lg">Load Quiz</Button>
+          <Button onClick={parseJson} className="w-full" size="lg">
+            Load Quiz
+          </Button>
         </div>
       </div>
     );
   }
 
-  const { englishPoints, hindiPoints } = currentQuestion ? parseExtraDetails(currentQuestion.extra_details) : { englishPoints: [], hindiPoints: [] };
-  const isAnswerRevealed = displayPhase !== "question";
+  const { englishPoints, hindiPoints } = currentQuestion
+    ? parseExtraDetails(currentQuestion.extra_details)
+    : { englishPoints: [], hindiPoints: [] };
 
   return (
-    <div className="min-h-screen bg-[#f5f5f5] flex flex-col">
-      <div className="flex-1 w-full px-6 md:px-12 mx-auto flex flex-col gap-5 py-6 overflow-y-auto">
-        <div className="bg-white border-2 border-black p-5 rounded-[15px] shadow-sm">
-          <div className="text-lg font-bold mb-2 flex gap-2">
-            <span>{currentIndex + 1}.</span>
-            <span>{currentQuestion?.question_en}</span>
-          </div>
-          <div className="text-lg font-bold text-red-600 ml-[25px]">
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Main Content */}
+      <div className="flex-1 p-2 flex flex-col">
+        {/* Question Card */}
+        <div className="border-2 border-foreground rounded-lg p-4 sm:p-6 mb-3">
+          <p className="text-lg sm:text-xl font-semibold text-foreground mb-2">
+            {currentIndex + 1}. {currentQuestion?.question_en}
+          </p>
+          <p className="text-base sm:text-lg text-red-500 font-medium">
             {currentQuestion?.question_hi}
-          </div>
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-[15px]">
+        {/* Options Grid */}
+        <div className="grid grid-cols-2 gap-3 mb-3">
           {currentQuestion?.options.map((option, idx) => {
             const isCorrect = option === currentQuestion.answer;
-            const isRevealedAndCorrect = isAnswerRevealed && isCorrect;
+            const showAsCorrect = displayPhase !== "question" && isCorrect;
+
             return (
-              <div
+              <button
                 key={idx}
-                className={`relative py-3 px-5 rounded-[50px] font-semibold text-center border-2 transition-all flex items-center justify-center min-h-[52px] overflow-hidden
-                  ${isRevealedAndCorrect ? 'bg-[#16A34A] border-[#16A34A] text-white' : 'bg-white border-[#102C57] text-[#102C57]'}`}
+                className={`py-3 px-4 rounded-full border-2 text-center font-medium transition-all ${showAsCorrect
+                  ? "bg-green-500 border-green-500 text-white"
+                  : "border-muted-foreground/30 text-foreground hover:border-primary"
+                  }`}
               >
-                {/* ऑटो-लेबलिंग रेंडरिंग */}
-                <span className="mr-2">{String.fromCharCode(65 + idx)}.</span>
                 {option}
-                {isRevealedAndCorrect && showConfetti && (
-                  <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-[50px]">
-                    {Array.from({ length: 15 }).map((_, j) => (
-                      <ConfettiPiece key={j} style={{ left: `${Math.random() * 100}%`, top: '-10px', animationDelay: `${Math.random() * 0.5}s`, animationDuration: `${1 + Math.random()}s` }} />
-                    ))}
-                  </div>
-                )}
-              </div>
+              </button>
             );
           })}
         </div>
 
-        <div className={`flex flex-col md:flex-row gap-5 transition-all duration-700 ${displayPhase === "details" && showDetails ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}`}>
-          <div className="flex-1 bg-white p-5 rounded-[15px] shadow-sm">
-            <div className="text-[24px] font-bold text-[#0F5298] mb-[15px]">Key Points</div>
-            <ul className="list-none">
-              {englishPoints.map((point, idx) => (
-                <li key={idx} className="relative pl-[20px] mb-[10px] text-[18px] font-bold text-[#333]">
-                  <span className="absolute left-0 text-[#007bff]">•</span>{point}
-                </li>
-              ))}
-            </ul>
+        {/* Key Points - shown after answer phase */}
+        {displayPhase === "details" && currentQuestion && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 flex-1">
+            {/* English Key Points */}
+            <div className="border rounded-lg p-4 bg-muted/30">
+              <h3 className="text-xl font-bold text-foreground mb-3">Key Points</h3>
+              <ul className="space-y-2">
+                {englishPoints.map((point, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-foreground text-sm">
+                    <span className="text-primary mt-0.5">•</span>
+                    <span>{point}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {/* Hindi Key Points */}
+            <div className="border rounded-lg p-4 bg-muted/30">
+              <h3 className="text-xl font-bold text-red-500 mb-3">महत्वपूर्ण जानकारी</h3>
+              <ul className="space-y-2">
+                {hindiPoints.map((point, idx) => (
+                  <li key={idx} className="flex items-start gap-2 text-foreground text-sm">
+                    <span className="text-red-500 mt-0.5">•</span>
+                    <span>{point}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
-          <div className="flex-1 bg-white p-5 rounded-[15px] shadow-sm">
-            <div className="text-[24px] font-bold text-[#0F5298] mb-[15px]">महत्वपूर्ण जानकारी</div>
-            <ul className="list-none">
-              {hindiPoints.map((point, idx) => (
-                <li key={idx} className="relative pl-[20px] mb-[10px] text-[18px] font-bold text-[#333]">
-                  <span className="absolute left-0 text-[#007bff]">•</span>{point}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+        )}
       </div>
 
-      <button onClick={() => setShowFooter(!showFooter)} className="mx-auto mb-1 p-1">
-        {showFooter ? <ChevronDown /> : <ChevronUp />}
+      {/* Footer Toggle */}
+      <button
+        onClick={() => setShowFooter(!showFooter)}
+        className="mx-auto mb-1 p-1 rounded-full hover:bg-muted"
+      >
+        {showFooter ? <ChevronDown className="h-6 w-6" /> : <ChevronUp className="h-6 w-6" />}
       </button>
 
+      {/* Footer Controls */}
       {showFooter && (
-        <div className="border-t bg-white p-3 flex items-center justify-between shadow-md">
-          <div className="text-sm text-muted-foreground min-w-[120px]">
-            {isGenerating ? <span className="animate-pulse">Generating: {completedCount}/{audioItems.length}</span> : allReady && !isPlaying ? <span className="text-green-500 font-semibold">Ready</span> : isPlaying ? <span className="text-[#0F5298] animate-pulse">Playing...</span> : null}
+        <div className="border-t bg-background p-3 flex items-center justify-between">
+          {/* Left - Status */}
+          <div className="flex items-center gap-2 text-sm text-muted-foreground min-w-[120px]">
+            {isGenerating && (
+              <span className="animate-pulse">Generating: {completedCount}/{audioItems.length}</span>
+            )}
+            {!isGenerating && allReady && !isPlaying && (
+              <span className="text-green-500">Ready - Press H</span>
+            )}
+            {!isGenerating && isPlaying && (
+              <span className="text-primary animate-pulse">Playing...</span>
+            )}
           </div>
+
+          {/* Center - Playback Controls */}
           <div className="flex items-center gap-2">
-            <Button size="icon" className="rounded-full bg-[#102C57]" onClick={goToPrevious} disabled={currentIndex === 0 || isPlaying}><ChevronLeft /></Button>
-            <Button size="icon" className="rounded-full h-12 w-12 bg-[#102C57]" onClick={isPlaying ? stopPlayback : startAutoPlay} disabled={!allReady}>{isPlaying ? <Pause /> : <Play />}</Button>
-            <Button size="icon" className="rounded-full bg-[#102C57]" onClick={goToNext} disabled={currentIndex === audioItems.length - 1 || isPlaying}><ChevronRight /></Button>
+            <Button
+              variant="default"
+              size="icon"
+              className="rounded-full h-10 w-10 bg-primary"
+              onClick={goToPrevious}
+              disabled={currentIndex === 0 || isPlaying}
+            >
+              <ChevronLeft className="h-5 w-5" />
+            </Button>
+
+            <Button
+              variant="default"
+              size="icon"
+              className="rounded-full h-12 w-12 bg-primary"
+              onClick={isPlaying ? stopPlayback : startAutoPlay}
+              disabled={!allReady}
+            >
+              {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6 ml-0.5" />}
+            </Button>
+
+            <Button
+              variant="default"
+              size="icon"
+              className="rounded-full h-10 w-10 bg-primary"
+              onClick={goToNext}
+              disabled={currentIndex === audioItems.length - 1 || isPlaying}
+            >
+              <ChevronRight className="h-5 w-5" />
+            </Button>
           </div>
+
+          {/* Right - Download & Counter */}
           <div className="flex items-center gap-3 min-w-[120px] justify-end">
-            <Button variant="ghost" size="icon" onClick={mergeAndDownloadAll} disabled={completedCount === 0}><Download /></Button>
-            <span className="text-sm font-semibold text-[#102C57]">{currentIndex + 1} / {audioItems.length}</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={mergeAndDownloadAll}
+              disabled={completedCount === 0}
+            >
+              <Download className="h-5 w-5" />
+            </Button>
+            <span className="text-sm font-medium">
+              {currentIndex + 1} / {audioItems.length}
+            </span>
           </div>
         </div>
       )}
