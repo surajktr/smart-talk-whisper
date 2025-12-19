@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { fetchAudioForText } from "@/lib/gemini-audio";
 import { ChevronLeft, ChevronRight, Play, Pause, Download, ChevronUp, ChevronDown } from "lucide-react";
 
+// नए फ़ॉर्मेट के अनुसार इंटरफ़ेस
 interface QuizQuestion {
   question_en: string;
   question_hi: string;
@@ -31,7 +32,6 @@ interface AudioItem {
 
 type DisplayPhase = "question" | "answer" | "details";
 
-// Confetti piece component
 const ConfettiPiece: React.FC<{ style: React.CSSProperties }> = ({ style }) => {
   const colors = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#cddc39', '#ffeb3b', '#ffc107', '#ff9800'];
   const randomColor = colors[Math.floor(Math.random() * colors.length)];
@@ -60,15 +60,8 @@ const Index = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioItemsRef = useRef<AudioItem[]>([]);
   const currentIndexRef = useRef(0);
-  const autoPlayModeRef = useRef(false);
   const { toast } = useToast();
 
-  // Keep autoPlayMode ref in sync
-  useEffect(() => {
-    autoPlayModeRef.current = autoPlayMode;
-  }, [autoPlayMode]);
-
-  // Keep refs in sync
   useEffect(() => {
     audioItemsRef.current = audioItems;
   }, [audioItems]);
@@ -77,7 +70,6 @@ const Index = () => {
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
 
-  // Handle phase changes for confetti and details
   useEffect(() => {
     if (displayPhase === "answer") {
       setShowConfetti(true);
@@ -118,7 +110,7 @@ const Index = () => {
       setDisplayPhase("question");
       setAllReady(false);
       setAutoPlayMode(false);
-      toast({ title: `Loaded ${parsed.data.length} questions` });
+      toast({ title: `Loaded ${parsed.data.length} questions. Generating audio...` });
 
       generateAllAudio(parsed.data);
     } catch (e) {
@@ -137,8 +129,9 @@ const Index = () => {
         )
       );
 
+      // द्विभाषी आवाज़ जनरेशन
       const questionBlob = await fetchAudioForText(q.question_script);
-      const answerBlob = await fetchAudioForText(`The correct answer is ${q.answer}`);
+      const answerBlob = await fetchAudioForText(`The correct answer is ${q.answer}. सही उत्तर है ${q.answer}.`);
       const detailsBlob = await fetchAudioForText(q.extra_details_speech_script);
 
       setAudioItems((prev) =>
@@ -158,100 +151,8 @@ const Index = () => {
 
     setIsGenerating(false);
     setAllReady(true);
-    toast({ title: "All audio ready! Press H to start." });
+    toast({ title: "All audio ready!" });
   };
-
-  const finishAndAdvance = useCallback((index: number) => {
-    setIsPlaying(false);
-
-    const items = audioItemsRef.current;
-    const isAutoPlay = autoPlayModeRef.current;
-    
-    console.log("finishAndAdvance called", { index, isAutoPlay, totalItems: items.length });
-    
-    if (isAutoPlay && index < items.length - 1) {
-      console.log("Auto-advancing to next question:", index + 1);
-      // Will trigger playQuestionAtIndex after delay
-      setTimeout(() => {
-        const nextIndex = index + 1;
-        const nextItem = audioItemsRef.current[nextIndex];
-        
-        if (!nextItem || nextItem.status !== "done" || !nextItem.questionAudio) {
-          toast({ title: "Audio not ready yet", variant: "destructive" });
-          setAutoPlayMode(false);
-          return;
-        }
-
-        if (audioRef.current) {
-          audioRef.current.pause();
-        }
-
-        setCurrentIndex(nextIndex);
-        setIsPlaying(true);
-        setDisplayPhase("question");
-
-        playAudioSequence(nextItem, nextIndex);
-      }, 1000);
-    } else if (index >= items.length - 1) {
-      setAutoPlayMode(false);
-      toast({ title: "Quiz completed!" });
-    }
-  }, [toast]);
-
-  const playAudioSequence = useCallback((item: AudioItem, index: number) => {
-    const questionUrl = URL.createObjectURL(item.questionAudio!);
-    const questionAudio = new Audio(questionUrl);
-    audioRef.current = questionAudio;
-    questionAudio.play();
-
-    questionAudio.onended = () => {
-      URL.revokeObjectURL(questionUrl);
-      setDisplayPhase("answer");
-
-      if (!item.answerAudio) {
-        // Skip to details
-        setDisplayPhase("details");
-        if (!item.detailsAudio) {
-          finishAndAdvance(index);
-          return;
-        }
-        const detailsUrl = URL.createObjectURL(item.detailsAudio);
-        const detailsAudio = new Audio(detailsUrl);
-        audioRef.current = detailsAudio;
-        detailsAudio.play();
-        detailsAudio.onended = () => {
-          URL.revokeObjectURL(detailsUrl);
-          finishAndAdvance(index);
-        };
-        return;
-      }
-
-      const answerUrl = URL.createObjectURL(item.answerAudio);
-      const answerAudio = new Audio(answerUrl);
-      audioRef.current = answerAudio;
-      answerAudio.play();
-
-      answerAudio.onended = () => {
-        URL.revokeObjectURL(answerUrl);
-        setDisplayPhase("details");
-
-        if (!item.detailsAudio) {
-          finishAndAdvance(index);
-          return;
-        }
-
-        const detailsUrl = URL.createObjectURL(item.detailsAudio);
-        const detailsAudio = new Audio(detailsUrl);
-        audioRef.current = detailsAudio;
-        detailsAudio.play();
-
-        detailsAudio.onended = () => {
-          URL.revokeObjectURL(detailsUrl);
-          finishAndAdvance(index);
-        };
-      };
-    };
-  }, [finishAndAdvance]);
 
   const playQuestionAtIndex = useCallback((index: number) => {
     const items = audioItemsRef.current;
@@ -271,8 +172,63 @@ const Index = () => {
     setIsPlaying(true);
     setDisplayPhase("question");
 
-    playAudioSequence(item, index);
-  }, [toast, playAudioSequence]);
+    const questionUrl = URL.createObjectURL(item.questionAudio);
+    const questionAudio = new Audio(questionUrl);
+    audioRef.current = questionAudio;
+    questionAudio.play();
+
+    questionAudio.onended = () => {
+      URL.revokeObjectURL(questionUrl);
+      setDisplayPhase("answer");
+
+      if (!item.answerAudio) {
+        playDetails(item, index);
+        return;
+      }
+
+      const answerUrl = URL.createObjectURL(item.answerAudio);
+      const answerAudio = new Audio(answerUrl);
+      audioRef.current = answerAudio;
+      answerAudio.play();
+
+      answerAudio.onended = () => {
+        URL.revokeObjectURL(answerUrl);
+        playDetails(item, index);
+      };
+    };
+  }, [toast]);
+
+  const playDetails = (item: AudioItem, index: number) => {
+    setDisplayPhase("details");
+
+    if (!item.detailsAudio) {
+      finishAndAdvance(index);
+      return;
+    }
+
+    const detailsUrl = URL.createObjectURL(item.detailsAudio);
+    const detailsAudio = new Audio(detailsUrl);
+    audioRef.current = detailsAudio;
+    detailsAudio.play();
+
+    detailsAudio.onended = () => {
+      URL.revokeObjectURL(detailsUrl);
+      finishAndAdvance(index);
+    };
+  };
+
+  const finishAndAdvance = (index: number) => {
+    setIsPlaying(false);
+    const items = audioItemsRef.current;
+    if (autoPlayMode && index < items.length - 1) {
+      setTimeout(() => {
+        playQuestionAtIndex(index + 1);
+      }, 1000);
+    } else if (index >= items.length - 1) {
+      setAutoPlayMode(false);
+      toast({ title: "Quiz completed!" });
+    }
+  };
 
   const startAutoPlay = useCallback(() => {
     if (!allReady) {
@@ -280,7 +236,7 @@ const Index = () => {
       return;
     }
     setAutoPlayMode(true);
-    setShowFooter(false); // Collapse footer when starting
+    setShowFooter(false);
     playQuestionAtIndex(currentIndexRef.current);
   }, [allReady, playQuestionAtIndex, toast]);
 
@@ -309,21 +265,6 @@ const Index = () => {
     }
   };
 
-  // H key handler - start auto-play after 1 second delay and collapse footer
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "h" && quizData && allReady && !isPlaying) {
-        setShowFooter(false); // Collapse footer immediately
-        setTimeout(() => {
-          startAutoPlay();
-        }, 1000);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [quizData, allReady, isPlaying, startAutoPlay]);
-
   const mergeAndDownloadAll = async () => {
     const completed = audioItems.filter((a) => a.status === "done" && a.questionAudio);
     if (completed.length === 0) {
@@ -332,7 +273,6 @@ const Index = () => {
     }
 
     toast({ title: "Merging audio files..." });
-
     const audioDataArray: ArrayBuffer[] = [];
     let sampleRate = 24000;
     let numChannels = 1;
@@ -340,30 +280,23 @@ const Index = () => {
 
     for (const item of completed) {
       const audios = [item.questionAudio, item.answerAudio, item.detailsAudio].filter(Boolean) as Blob[];
-
       for (const blob of audios) {
         const arrayBuffer = await blob.arrayBuffer();
         const view = new DataView(arrayBuffer);
-
         if (audioDataArray.length === 0) {
           sampleRate = view.getUint32(24, true);
           numChannels = view.getUint16(22, true);
           bitsPerSample = view.getUint16(34, true);
         }
-
-        const pcmData = arrayBuffer.slice(44);
-        audioDataArray.push(pcmData);
+        audioDataArray.push(arrayBuffer.slice(44));
       }
     }
 
     const totalSize = audioDataArray.reduce((sum, buf) => sum + buf.byteLength, 0);
     const mergedBuffer = new ArrayBuffer(44 + totalSize);
     const mergedView = new DataView(mergedBuffer);
-
     const writeString = (offset: number, str: string) => {
-      for (let i = 0; i < str.length; i++) {
-        mergedView.setUint8(offset + i, str.charCodeAt(i));
-      }
+      for (let i = 0; i < str.length; i++) mergedView.setUint8(offset + i, str.charCodeAt(i));
     };
 
     writeString(0, 'RIFF');
@@ -393,222 +326,122 @@ const Index = () => {
     a.download = `quiz_${quizData?.date || 'audio'}_merged.wav`;
     a.click();
     URL.revokeObjectURL(url);
-
-    toast({ title: `Downloaded merged file (${completed.length} questions)` });
   };
 
   const parseExtraDetails = (details: string) => {
     const englishPoints: string[] = [];
     const hindiPoints: string[] = [];
-
     const lines = details.split('\n').filter(line => line.trim().startsWith('-'));
-
     lines.forEach(line => {
       const cleanLine = line.substring(1).trim().replace(/\*\*/g, '');
-      if (/[\u0900-\u097F]/.test(cleanLine)) {
-        hindiPoints.push(cleanLine);
-      } else {
-        englishPoints.push(cleanLine);
-      }
+      if (/[\u0900-\u097F]/.test(cleanLine)) hindiPoints.push(cleanLine);
+      else englishPoints.push(cleanLine);
     });
-
     return { englishPoints, hindiPoints };
   };
 
   const currentQuestion = quizData?.data[currentIndex];
-  const currentAudioItem = audioItems[currentIndex];
   const completedCount = audioItems.filter((a) => a.status === "done").length;
 
-  // Initial JSON input view
   if (!quizData) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <div className="w-full max-w-2xl space-y-4">
-          <h1 className="text-2xl font-bold text-center text-foreground">Quiz Voice Generator</h1>
+          <h1 className="text-2xl font-bold text-center">Quiz Voice Generator</h1>
           <Textarea
             placeholder="Paste your quiz JSON here..."
             value={jsonInput}
             onChange={(e) => setJsonInput(e.target.value)}
             className="min-h-[300px] font-mono text-sm"
           />
-          <Button onClick={parseJson} className="w-full" size="lg">
-            Load Quiz
-          </Button>
+          <Button onClick={parseJson} className="w-full" size="lg">Load Quiz</Button>
         </div>
       </div>
     );
   }
 
-  const { englishPoints, hindiPoints } = currentQuestion
-    ? parseExtraDetails(currentQuestion.extra_details)
-    : { englishPoints: [], hindiPoints: [] };
-
+  const { englishPoints, hindiPoints } = currentQuestion ? parseExtraDetails(currentQuestion.extra_details) : { englishPoints: [], hindiPoints: [] };
   const isAnswerRevealed = displayPhase !== "question";
 
   return (
     <div className="min-h-screen bg-[#f5f5f5] flex flex-col">
-      {/* Main Content */}
       <div className="flex-1 w-full px-6 md:px-12 mx-auto flex flex-col gap-5 py-6 overflow-y-auto">
-        
-        {/* Question Box */}
-        <div className="bg-white text-black border-2 border-black p-5 rounded-[15px] shadow-[0_4px_10px_rgba(0,0,0,0.1)]">
-          <div className="text-lg md:text-[18px] font-bold mb-2 leading-[1.4] flex gap-2">
+        <div className="bg-white border-2 border-black p-5 rounded-[15px] shadow-sm">
+          <div className="text-lg font-bold mb-2 flex gap-2">
             <span>{currentIndex + 1}.</span>
             <span>{currentQuestion?.question_en}</span>
           </div>
-          <div className="text-lg md:text-[18px] font-bold text-red-600 ml-[25px]">
+          <div className="text-lg font-bold text-red-600 ml-[25px]">
             {currentQuestion?.question_hi}
           </div>
         </div>
 
-        {/* Options Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-[15px]">
           {currentQuestion?.options.map((option, idx) => {
             const isCorrect = option === currentQuestion.answer;
             const isRevealedAndCorrect = isAnswerRevealed && isCorrect;
-
             return (
               <div
                 key={idx}
-                className={`relative py-3 px-5 rounded-[50px] text-[16px] font-semibold cursor-pointer text-center border-2 transition-all duration-300 flex items-center justify-center min-h-[52px] overflow-hidden
-                  ${isRevealedAndCorrect
-                    ? 'bg-[#16A34A] border-[#16A34A] text-white shadow-[0_4px_10px_rgba(22,163,74,0.3)]'
-                    : 'bg-white border-[#102C57] text-[#102C57] hover:bg-[#f0f8ff]'
-                  }`}
+                className={`relative py-3 px-5 rounded-[50px] font-semibold text-center border-2 transition-all flex items-center justify-center min-h-[52px] overflow-hidden
+                  ${isRevealedAndCorrect ? 'bg-[#16A34A] border-[#16A34A] text-white' : 'bg-white border-[#102C57] text-[#102C57]'}`}
               >
-                {/* Confetti */}
+                {/* ऑटो-लेबलिंग रेंडरिंग */}
+                <span className="mr-2">{String.fromCharCode(65 + idx)}.</span>
+                {option}
                 {isRevealedAndCorrect && showConfetti && (
                   <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-[50px]">
                     {Array.from({ length: 15 }).map((_, j) => (
-                      <ConfettiPiece
-                        key={j}
-                        style={{
-                          left: `${Math.random() * 100}%`,
-                          top: '-10px',
-                          animationDelay: `${Math.random() * 0.5}s`,
-                          animationDuration: `${1 + Math.random()}s`,
-                        }}
-                      />
+                      <ConfettiPiece key={j} style={{ left: `${Math.random() * 100}%`, top: '-10px', animationDelay: `${Math.random() * 0.5}s`, animationDuration: `${1 + Math.random()}s` }} />
                     ))}
                   </div>
                 )}
-                {option}
               </div>
             );
           })}
         </div>
 
-        {/* Info Cards - shown in details phase */}
-        <div className={`flex flex-col md:flex-row gap-5 transition-all duration-700 ease-in-out ${
-          displayPhase === "details" && showDetails 
-            ? 'opacity-100 translate-y-0' 
-            : 'opacity-0 translate-y-4 pointer-events-none h-0 overflow-hidden'
-        }`}>
-          
-          {/* Key Points Card */}
-          <div className="flex-1 bg-white p-5 rounded-[15px] shadow-[0_4px_15px_rgba(0,0,0,0.05)]">
+        <div className={`flex flex-col md:flex-row gap-5 transition-all duration-700 ${displayPhase === "details" && showDetails ? 'opacity-100' : 'opacity-0 h-0 overflow-hidden'}`}>
+          <div className="flex-1 bg-white p-5 rounded-[15px] shadow-sm">
             <div className="text-[24px] font-bold text-[#0F5298] mb-[15px]">Key Points</div>
             <ul className="list-none">
               {englishPoints.map((point, idx) => (
-                <li key={idx} className="relative pl-[20px] mb-[10px] text-[18px] font-bold text-[#333] leading-[1.5]">
-                  <span className="absolute left-0 top-[-2px] text-[#007bff] font-bold text-[20px]">•</span>
-                  {point}
+                <li key={idx} className="relative pl-[20px] mb-[10px] text-[18px] font-bold text-[#333]">
+                  <span className="absolute left-0 text-[#007bff]">•</span>{point}
                 </li>
               ))}
-              {englishPoints.length === 0 && (
-                <li className="text-gray-400 italic text-sm">No additional English details available.</li>
-              )}
             </ul>
           </div>
-
-          {/* Hindi Details Card */}
-          <div className="flex-1 bg-white p-5 rounded-[15px] shadow-[0_4px_15px_rgba(0,0,0,0.05)]">
+          <div className="flex-1 bg-white p-5 rounded-[15px] shadow-sm">
             <div className="text-[24px] font-bold text-[#0F5298] mb-[15px]">महत्वपूर्ण जानकारी</div>
             <ul className="list-none">
               {hindiPoints.map((point, idx) => (
-                <li key={idx} className="relative pl-[20px] mb-[10px] text-[18px] font-bold text-[#333] leading-[1.5]">
-                  <span className="absolute left-0 top-[-2px] text-[#007bff] font-bold text-[20px]">•</span>
-                  {point}
+                <li key={idx} className="relative pl-[20px] mb-[10px] text-[18px] font-bold text-[#333]">
+                  <span className="absolute left-0 text-[#007bff]">•</span>{point}
                 </li>
               ))}
-              {hindiPoints.length === 0 && (
-                <li className="text-gray-400 italic text-sm">कोई अतिरिक्त जानकारी उपलब्ध नहीं है।</li>
-              )}
             </ul>
           </div>
         </div>
       </div>
 
-      {/* Footer Toggle */}
-      <button
-        onClick={() => setShowFooter(!showFooter)}
-        className="mx-auto mb-1 p-1 rounded-full hover:bg-white/50"
-      >
-        {showFooter ? <ChevronDown className="h-6 w-6" /> : <ChevronUp className="h-6 w-6" />}
+      <button onClick={() => setShowFooter(!showFooter)} className="mx-auto mb-1 p-1">
+        {showFooter ? <ChevronDown /> : <ChevronUp />}
       </button>
 
-      {/* Footer Controls */}
       {showFooter && (
-        <div className="border-t bg-white p-3 flex items-center justify-between shadow-[0_-4px_10px_rgba(0,0,0,0.05)]">
-          {/* Left - Status */}
-          <div className="flex items-center gap-2 text-sm text-muted-foreground min-w-[120px]">
-            {isGenerating && (
-              <span className="animate-pulse">Generating: {completedCount}/{audioItems.length}</span>
-            )}
-            {!isGenerating && allReady && !isPlaying && (
-              <span className="text-green-500 font-semibold">Ready - Press H</span>
-            )}
-            {!isGenerating && isPlaying && (
-              <span className="text-[#0F5298] animate-pulse font-semibold">Playing...</span>
-            )}
+        <div className="border-t bg-white p-3 flex items-center justify-between shadow-md">
+          <div className="text-sm text-muted-foreground min-w-[120px]">
+            {isGenerating ? <span className="animate-pulse">Generating: {completedCount}/{audioItems.length}</span> : allReady && !isPlaying ? <span className="text-green-500 font-semibold">Ready</span> : isPlaying ? <span className="text-[#0F5298] animate-pulse">Playing...</span> : null}
           </div>
-
-          {/* Center - Playback Controls */}
           <div className="flex items-center gap-2">
-            <Button
-              variant="default"
-              size="icon"
-              className="rounded-full h-10 w-10 bg-[#102C57] hover:bg-[#1a3d6e]"
-              onClick={goToPrevious}
-              disabled={currentIndex === 0 || isPlaying}
-            >
-              <ChevronLeft className="h-5 w-5" />
-            </Button>
-
-            <Button
-              variant="default"
-              size="icon"
-              className="rounded-full h-12 w-12 bg-[#102C57] hover:bg-[#1a3d6e]"
-              onClick={isPlaying ? stopPlayback : startAutoPlay}
-              disabled={!allReady}
-            >
-              {isPlaying ? <Pause className="h-6 w-6" /> : <Play className="h-6 w-6 ml-0.5" />}
-            </Button>
-
-            <Button
-              variant="default"
-              size="icon"
-              className="rounded-full h-10 w-10 bg-[#102C57] hover:bg-[#1a3d6e]"
-              onClick={goToNext}
-              disabled={currentIndex === audioItems.length - 1 || isPlaying}
-            >
-              <ChevronRight className="h-5 w-5" />
-            </Button>
+            <Button size="icon" className="rounded-full bg-[#102C57]" onClick={goToPrevious} disabled={currentIndex === 0 || isPlaying}><ChevronLeft /></Button>
+            <Button size="icon" className="rounded-full h-12 w-12 bg-[#102C57]" onClick={isPlaying ? stopPlayback : startAutoPlay} disabled={!allReady}>{isPlaying ? <Pause /> : <Play />}</Button>
+            <Button size="icon" className="rounded-full bg-[#102C57]" onClick={goToNext} disabled={currentIndex === audioItems.length - 1 || isPlaying}><ChevronRight /></Button>
           </div>
-
-          {/* Right - Download & Counter */}
           <div className="flex items-center gap-3 min-w-[120px] justify-end">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={mergeAndDownloadAll}
-              disabled={completedCount === 0}
-            >
-              <Download className="h-5 w-5" />
-            </Button>
-            <span className="text-sm font-semibold text-[#102C57]">
-              {currentIndex + 1} / {audioItems.length}
-            </span>
+            <Button variant="ghost" size="icon" onClick={mergeAndDownloadAll} disabled={completedCount === 0}><Download /></Button>
+            <span className="text-sm font-semibold text-[#102C57]">{currentIndex + 1} / {audioItems.length}</span>
           </div>
         </div>
       )}
